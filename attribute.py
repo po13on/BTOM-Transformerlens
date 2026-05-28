@@ -13,7 +13,7 @@ import transformer_lens
 from transformer_lens import HookedTransformer
 
 import sys
-sys.path.append('/home/xd/projects/transformers/notebooks/pptree')
+sys.path.append('/home/hushengchun/project/BARC-transformerlens/pptree')
 from pptree import Node as TNode, print_tree
 
 from common_utils import einsum, mr, topk_md

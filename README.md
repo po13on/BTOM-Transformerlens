@@ -1,4 +1,4 @@
-# BARC-TransformerLens（Hi-ToM 可解释性分析）
+# BTOM-TransformerLens（基于 TransformerLens 的针对 Hi-ToM 数据集的可视化可解释性分析）
 
 这是一个面向 **TransformerLens 支持模型**（如 `Qwen2.5`、`Qwen3`）的可解释性研究工作目录。  
 核心目标是：在 **Hi-ToM 数据集** 上，对模型的注意力头与中间表征进行归因、聚类和可视化分析。
@@ -40,18 +40,20 @@
 
 建议 Python 3.10+，CUDA 环境可用。常用依赖：
 
-- `torch`
-- `transformers`
-- `transformer_lens`
 - `bitsandbytes`（4bit 场景）
-- `einops`
 - `pandas`
 - `numpy`
 - `matplotlib`
 - `seaborn`
 - `tqdm`
-- `circuitsvis`
 - `jupyter`
+- `IPython==8.12.0`
+- `ipykernel==6.19.2`
+- `circuitsvis==1.40.0`
+- `torch==2.8.0`
+- `einops==0.6.1`
+- `transformers==4.55.4`
+- `transformer_lens==2.16.1`
 
 可先按你当前环境安装，再按报错补齐缺失包。
 
