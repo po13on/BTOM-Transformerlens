@@ -1,4 +1,4 @@
-# BTOM-TransformerLens（基于 TransformerLens 的针对 Hi-ToM 数据集的可视化可解释性分析）
+# BTOM-TransformerLens（基于 TransformerLens 架构模型的针对 Hi-ToM 数据集的可视化可解释性分析）
 
 这是一个面向 **TransformerLens 支持模型**（如 `Qwen2.5`、`Qwen3`）的可解释性研究工作目录。  
 核心目标是：在 **Hi-ToM 数据集** 上，对模型的注意力头与中间表征进行归因、聚类和可视化分析。
