@@ -1233,6 +1233,42 @@ def _model_n_layers_n_heads(model):
     return int(model.config.num_hidden_layers), int(model.config.num_attention_heads)
 
 
+def _patch_plotly_figurewidget_uid_bug():
+    """Skip trace-delta sync messages missing ``uid`` (known Plotly FigureWidget bug)."""
+    try:
+        from plotly.basewidget import BaseFigureWidget
+    except Exception:
+        return
+    if getattr(BaseFigureWidget, '_btom_uid_patch', False):
+        return
+    _orig = BaseFigureWidget._handler_js2py_traceDeltas
+
+    def _safe_handler(self, change):
+        msg_data = change.get('new')
+        if not msg_data:
+            self._js2py_traceDeltas = None
+            return
+        deltas = msg_data.get('trace_deltas') or []
+        fixed = [d for d in deltas if isinstance(d, dict) and 'uid' in d]
+        if len(fixed) != len(deltas):
+            msg_data = dict(msg_data)
+            msg_data['trace_deltas'] = fixed
+            change = {
+                'name': change.get('name'),
+                'old': change.get('old'),
+                'new': msg_data,
+                'owner': change.get('owner'),
+                'type': change.get('type'),
+            }
+        if not fixed:
+            self._js2py_traceDeltas = None
+            return
+        return _orig(self, change)
+
+    BaseFigureWidget._handler_js2py_traceDeltas = _safe_handler
+    BaseFigureWidget._btom_uid_patch = True
+
+
 def visualize_model_heads(
     root,
     model,
@@ -1261,13 +1297,16 @@ def visualize_model_heads(
         marker_size: Scatter marker size.
 
     Returns:
-        plotly FigureWidget (also displayed with the attn panel).
+        ipywidgets HBox UI. Assign with ``ui = visualize_model_heads(...)`` so the
+        notebook cell does not render a second orphan figure.
     """
     import random
     import ipywidgets as widgets
     from IPython.display import display, clear_output
     import plotly.graph_objects as go
     from circuitsvis.tokens import colored_tokens_multi
+
+    _patch_plotly_figurewidget_uid_bug()
 
     n_layers, n_heads = _model_n_layers_n_heads(model)
     on_tree = collect_tree_attn_heads(root)
@@ -1279,32 +1318,37 @@ def visualize_model_heads(
             random.randint(40, 200),
         )
 
-    xs, ys, colors, texts, custom = [], [], [], [], []
+    # Numeric colors + colorscale avoids some FigureWidget color-list sync issues.
+    xs, ys, color_vals, texts, custom = [], [], [], [], []
     for l in range(n_layers):
         for h in range(n_heads):
             xs.append(h)
             ys.append(l)
             marked = (l, h) in on_tree
-            colors.append(tree_color if marked else 'white')
+            color_vals.append(1 if marked else 0)
             texts.append(f'L{l} H{h}' + (' · on tree' if marked else ''))
             custom.append([l, h])
 
-    fig = go.FigureWidget(
-        data=[go.Scatter(
-            x=xs,
-            y=ys,
-            mode='markers',
-            marker=dict(
-                size=marker_size,
-                color=colors,
-                line=dict(width=1, color='#555555'),
-                symbol='circle',
-            ),
-            text=texts,
-            hoverinfo='text',
-            customdata=custom,
-        )]
+    scatter = go.Scatter(
+        x=xs,
+        y=ys,
+        mode='markers',
+        marker=dict(
+            size=marker_size,
+            color=color_vals,
+            cmin=0,
+            cmax=1,
+            colorscale=[[0, 'white'], [1, tree_color]],
+            line=dict(width=1, color='#555555'),
+            symbol='circle',
+            showscale=False,
+        ),
+        text=texts,
+        hoverinfo='text',
+        customdata=custom,
+        uid='btom-head-grid',
     )
+    fig = go.FigureWidget(data=[scatter])
     fig.update_layout(
         title=f'Heads {n_layers}×{n_heads}  |  on-tree: {tree_color}  |  {len(on_tree)} marked',
         xaxis=dict(
@@ -1380,6 +1424,7 @@ def visualize_model_heads(
         l, h = trace.customdata[i]
         render_head(int(l), int(h))
 
+    # Bind after the trace is owned by FigureWidget (callbacks are not copied on add).
     fig.data[0].on_click(on_click)
 
     def on_sample_change(change):
@@ -1391,5 +1436,7 @@ def visualize_model_heads(
 
     left = widgets.VBox([sample_dd, fig])
     right = widgets.VBox([status, attn_out])
-    display(widgets.HBox([left, right]))
-    return fig
+    # Return the UI only — do NOT also display(fig)/display(ui).
+    # Returning FigureWidget used to make the notebook cell render a second empty grid.
+    ui = widgets.HBox([left, right])
+    return ui
