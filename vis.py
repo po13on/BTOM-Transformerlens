@@ -152,8 +152,7 @@ def eval_nodes(result, model, nodes):
     return acc
 
 
-def show_attn(r, model, layer, head, downstreams=None, last_k=1, start=None, stop=None):
-    print(r.rel_fn)
+def show_attn(r, model, layer, head, downstreams=None, last_k=1, start=None, stop=None, pos_ids=None):
     for resp, b in zip(r.responses, r.is_corrects): print(resp+('✓' if b else '✗'), end=' ')
     aw = get_attn_weights(model, r, layer, head)
     actw = aw.clone()  # activation weights
@@ -163,7 +162,7 @@ def show_attn(r, model, layer, head, downstreams=None, last_k=1, start=None, sto
     # answers = r.answers[-r.Q_train*last_k:]
     # pos_ids = torch.LongTensor(r.answer_indices[-r.Q_train*last_k:]) - 1
     answers = r.answers[-last_k:]
-    pos_ids = torch.LongTensor(r.answer_indices[-last_k:]) - 1
+    pos_ids = torch.LongTensor([pos_ids]) if pos_ids is not None else torch.LongTensor(r.answer_indices[-last_k:]) - 1
     aw = aw[:, pos_ids]  # 1ij-1kj
     if downstreams is not None:
         ag = attribute_attn_weights(r, model, layer, head, downstreams)[1].to(aw.device)
@@ -176,7 +175,6 @@ def show_attn(r, model, layer, head, downstreams=None, last_k=1, start=None, sto
     aw = torch.cat([actw, aw], dim=1)  # 11j+1(k2)j->1(1+k2)j
     labels = ['act'] + join_lists([['q->', a+('✓' if b else '✗')] + (['aa'] if downstreams is not None else [])
         for a, b in zip(answers, eval_head_lens(r, model, layer, head, reduce='none'))])
-
     tokens = [t.replace('Ġ', ' ').replace('Ċ', '\n') for t in model.tokenizer.tokenize(r.prompt)]
     start = start if start is not None else r.puzzle['train'][-last_k].input_ranges.prefix['grid'][0] - 5
     stop = stop if stop is not None else len(tokens)
@@ -1201,3 +1199,197 @@ def visualize_graph(
         print(f"Open in browser: {url}")
     
     return save_path
+
+
+def iter_attribution_tnodes(root):
+    """Depth-first walk over pptree attribution nodes starting from root."""
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        yield node
+        children = getattr(node, 'children', None) or []
+        stack.extend(children)
+
+
+def collect_tree_attn_heads(root):
+    """Collect (layer, head) pairs present on the attribution tree (skip lm_head)."""
+    heads = set()
+    for tnode in iter_attribution_tnodes(root):
+        data = getattr(tnode, 'data', None)
+        if data is None:
+            continue
+        for n in getattr(data, 'nodes', None) or []:
+            if getattr(n, 'head', None) is None:
+                continue
+            if hasattr(n, 'is_lm_head') and n.is_lm_head():
+                continue
+            heads.add((int(n.layer), int(n.head)))
+    return heads
+
+
+def _model_n_layers_n_heads(model):
+    if isinstance(model, transformer_lens.HookedTransformer):
+        return int(model.cfg.n_layers), int(model.cfg.n_heads)
+    return int(model.config.num_hidden_layers), int(model.config.num_attention_heads)
+
+
+def visualize_model_heads(
+    root,
+    model,
+    results,
+    sample=None,
+    downstreams=None,
+    start=None,
+    tree_color=None,
+    marker_size=11,
+):
+    """Interactive L×H head map: click a circle to render show_attn on the right.
+
+    - Default circles are white.
+    - Heads that appear on the attribution tree share one random (or given) color.
+    - ``sample`` is optional (defaults to ``results[0]``); change via the dropdown.
+
+    Args:
+        root: Attribution tree root (pptree node with ``.data.nodes``).
+        model: HookedTransformer or HF model used by ``show_attn``.
+        results: List of result objects (same as ``_results``).
+        sample: Optional initial sample; defaults to ``results[0]``.
+        downstreams: Passed to ``show_attn``; defaults to ``root.data.nodes``.
+        start: Token window start for ``show_attn``; defaults to
+            ``sample.index_map[0]['start']`` when available.
+        tree_color: CSS/plotly color for on-tree heads; random if None.
+        marker_size: Scatter marker size.
+
+    Returns:
+        plotly FigureWidget (also displayed with the attn panel).
+    """
+    import random
+    import ipywidgets as widgets
+    from IPython.display import display, clear_output
+    import plotly.graph_objects as go
+    from circuitsvis.tokens import colored_tokens_multi
+
+    n_layers, n_heads = _model_n_layers_n_heads(model)
+    on_tree = collect_tree_attn_heads(root)
+
+    if tree_color is None:
+        tree_color = 'rgb({},{},{})'.format(
+            random.randint(40, 200),
+            random.randint(40, 200),
+            random.randint(40, 200),
+        )
+
+    xs, ys, colors, texts, custom = [], [], [], [], []
+    for l in range(n_layers):
+        for h in range(n_heads):
+            xs.append(h)
+            ys.append(l)
+            marked = (l, h) in on_tree
+            colors.append(tree_color if marked else 'white')
+            texts.append(f'L{l} H{h}' + (' · on tree' if marked else ''))
+            custom.append([l, h])
+
+    fig = go.FigureWidget(
+        data=[go.Scatter(
+            x=xs,
+            y=ys,
+            mode='markers',
+            marker=dict(
+                size=marker_size,
+                color=colors,
+                line=dict(width=1, color='#555555'),
+                symbol='circle',
+            ),
+            text=texts,
+            hoverinfo='text',
+            customdata=custom,
+        )]
+    )
+    fig.update_layout(
+        title=f'Heads {n_layers}×{n_heads}  |  on-tree: {tree_color}  |  {len(on_tree)} marked',
+        xaxis=dict(
+            title='head',
+            dtick=max(1, n_heads // 8),
+            range=[-0.8, n_heads - 0.2],
+            zeroline=False,
+        ),
+        yaxis=dict(
+            title='layer',
+            dtick=max(1, n_layers // 8),
+            range=[-0.8, n_layers - 0.2],
+            zeroline=False,
+        ),
+        width=max(520, int(n_heads * 16 + 80)),
+        height=max(420, int(n_layers * 16 + 80)),
+        plot_bgcolor='#d9d9d9',
+        paper_bgcolor='white',
+        margin=dict(l=50, r=20, t=48, b=40),
+        showlegend=False,
+    )
+
+    if sample is None:
+        sample = results[0]
+    try:
+        init_idx = list(results).index(sample)
+    except ValueError:
+        init_idx = 0
+        sample = results[0]
+
+    state = {'sample': sample, 'sel': None}
+
+    sample_dd = widgets.Dropdown(
+        options=[(f'sample[{i}]', i) for i in range(len(results))],
+        value=init_idx,
+        description='sample:',
+        layout=widgets.Layout(width='220px'),
+    )
+    status = widgets.HTML(value='<i>Click a circle to inspect attention</i>')
+    attn_out = widgets.Output(
+        layout=widgets.Layout(max_height='720px', overflow_y='auto', min_width='480px')
+    )
+
+    def _resolve_start(s):
+        if start is not None:
+            return start
+        try:
+            return s.index_map[0]['start']
+        except Exception:
+            return None
+
+    def _resolve_downstreams():
+        if downstreams is not None:
+            return downstreams
+        return root.data.nodes
+
+    def render_head(l, h):
+        state['sel'] = (l, h)
+        s = state['sample']
+        status.value = f'<b>Selected</b> layer={l}, head={h}'
+        with attn_out:
+            clear_output(wait=True)
+            display(colored_tokens_multi(*show_attn(
+                s, model, int(l), int(h),
+                downstreams=_resolve_downstreams(),
+                start=_resolve_start(s),
+            )))
+
+    def on_click(trace, points, selector):
+        if not points.point_inds:
+            return
+        i = points.point_inds[0]
+        l, h = trace.customdata[i]
+        render_head(int(l), int(h))
+
+    fig.data[0].on_click(on_click)
+
+    def on_sample_change(change):
+        state['sample'] = results[change['new']]
+        if state['sel'] is not None:
+            render_head(*state['sel'])
+
+    sample_dd.observe(on_sample_change, names='value')
+
+    left = widgets.VBox([sample_dd, fig])
+    right = widgets.VBox([status, attn_out])
+    display(widgets.HBox([left, right]))
+    return fig
