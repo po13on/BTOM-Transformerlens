@@ -95,12 +95,15 @@ Choose `node_type` with the same mapping as open-ended Step 2c. If `add_edges`/`
 
 ## End visualization (once)
 
+The upper-bound landmark cell already contains:
+
 ```python
-ui = visualize_model_heads(root, selected_model, _results, sample=_results[0])
+visualize_model_heads(root, selected_model, _results, sample=_results[0])
 ```
 
-- Insert + run **once** after the loop. Widget is for the **user** to click; agent does not click.
-- Do not fill `layer`/`heads` arrays or insert `colored_tokens_multi` loops.
+- After the loop, **re-run that existing cell** once (do not append a duplicate viz below the lower bound).
+- Widget is for the **user** to click; agent does not click.
+- Do not fill `layer`/`heads` arrays or add new `colored_tokens_multi` loops as the default review path (the lower-bound cell is a landmark only).
 - Note in the report that viz ran (or report the error if it failed).
 
 ## Switching modes

@@ -1,17 +1,40 @@
 # Phase 2 — Cluster → Score → Expand
 
+## Attribution workspace (mandatory sandbox)
+
+All cluster / score / expand cells live in a **fixed mid-notebook band** so the user can watch attribution without scrolling to the notebook end.
+
+**Locate bounds by source match** (indexes drift — re-scan with `notebook_list_cells` / search before each session):
+
+| Bound | Exact landmark source (do not edit/delete/move) |
+| ----- | ----------------------------------------------- |
+| **Upper** | `visualize_model_heads(root, selected_model, _results, sample=_results[0])` |
+| **Lower** | `colored_tokens_multi(*show_attn(random.choice(_results), selected_model, 51, 10, downstreams=tnode.data.nodes, start=_results[0].index_map[0]['start']))#, start=100))` |
+
+**Inside `(upper_idx, lower_idx)` only:**
+
+- Freely **overwrite** existing workspace cells and/or **insert** new code/markdown cells for attribution.
+- Why overwrite is allowed here: appending rounds at the notebook end pushes work out of the user’s view; the sandbox is the shared scratchpad for the agent’s attribution trail.
+- When inserting, choose an index `i` with `upper_idx < i <= lower_idx` (insert **before** the lower landmark so it remains the bookend). After inserts, re-resolve `lower_idx` — it shifts down.
+- Optional markdown `### Round N` inside the sandbox for readability.
+
+**Outside the sandbox — forbidden for Phase 2:**
+
+- Do **not** append cluster/score/expand cells at the notebook end or below the lower bound.
+- Do **not** insert above/at the upper bound or modify either landmark cell’s source.
+- Phase 1 setup cells above the upper bound stay as usual (re-run by index/id).
+
+**End review:** after the loop, re-run the **existing upper-bound** `visualize_model_heads` cell once. Do not create a second viz cell at the end. The lower-bound `colored_tokens_multi(...)` is only a bookend / optional spot-check — not the default end-review workflow.
+
 ## Execution (mandatory)
 
-1. Run **only in** `$PROJECT_ROOT/test.ipynb` via Notebook MCP (`notebook_insert_cell` + `notebook_run_cell`). Pass `notebook_uri` if the tab is open but not “active”.
+1. Run **only in** `$PROJECT_ROOT/test.ipynb` via Notebook MCP (`notebook_edit_cell` / `notebook_insert_cell` + `notebook_run_cell` **inside the sandbox**). Pass `notebook_uri` if the tab is open but not “active”.
 2. **Forbidden:** Shell / `jupyter_client` / hidden kernel / editing JSON then executing outside UI.
-3. Every round `N`: **three new code cells** (never overwrite prior rounds; never merge cluster+expand):
+3. Every round `N`: **three logical steps** (never merge cluster+expand into one cell):
    - `# Round N cluster` — only `cluster_heads`
    - `# Round N score` — `d = tnode.data` then Pattern Score DataFrame
    - `# Round N expand` — exact `Node(...)` list + `add_edges` / `add_tnode` / `print_tree`
-4. Optional markdown `### Round N` before each round.
-5. End review: **one** `visualize_model_heads` cell after the loop.
-
-Phase 1 may re-run existing setup cells by index. Phase 2 **must insert new cells**.
+4. Prefer overwriting/recycling workspace cells when that keeps the mid-notebook trail clear; insert additional cells inside the sandbox when a round needs more space.
 
 ## Pattern Score vs Positive Bound
 
@@ -140,7 +163,7 @@ Skip clusters with no clear dominant pattern.
 ## Bookkeeping
 
 - `round_i` starts at 1; after each successful expand, record round, hung nodes, frontiers, thresholds, tree snippet.
-- Default: skip mid-loop viz; run `visualize_model_heads` once after the loop.
+- Default: skip mid-loop viz; after the loop, re-run the existing upper-bound `visualize_model_heads` cell once.
 - Zero candidates after lowering thresholds → **exhausted thresholds** stop.
 
 ## Agent-set stops
@@ -149,4 +172,4 @@ Skip clusters with no clear dominant pattern.
 2. **Exhausted thresholds** — `cluster_threshold`≤0.1 and `attn_pattern_threshold`≤0.05 still empty
 3. **Stagnation** — same `top_heads` / empty deduped candidates / no new roles
 
-On stop: report tree + roles (open-ended) or accumulated matches (goal-directed); run viz once if not done; **STOP**.
+On stop: report tree + roles (open-ended) or accumulated matches (goal-directed); re-run upper-bound viz once if not done; **STOP**.

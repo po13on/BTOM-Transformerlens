@@ -25,7 +25,7 @@ Section 3 is **required** for open-ended complete-tree runs (and whenever the us
 >
 > **经验门槛**：match_score_floor 由首轮同指标观测分数推导；用于判定匹配，不是循环停条件。写明指标、门槛、参考头、轮次、停止原因。
 >
-> **可视化审阅**：已运行一次 visualize_model_heads；请在 notebook 中点击圆点审阅。
+> **可视化审阅**：已重跑上边界 visualize_model_heads 单元格；请在 notebook 中点击圆点审阅（归因代码仅在上下边界之间）。
 ```
 
 ### Goal-directed — no match
