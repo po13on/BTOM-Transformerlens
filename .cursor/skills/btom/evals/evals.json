@@ -1,0 +1,23 @@
+{
+  "skill_name": "btom",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "项目在 /home/hushengchun/project/BTOM-transformerlens。用 Qwen3-8B 4bit + TransformerLens，加载 Hi_ToM_order_1.csv，只跑到 forward cache / root node，不要归因。报告 L/H/V 和 n_samples。",
+      "expected_output": "Phase 1 only; reports L/H/V and sample count; no cluster/score/expand cells; stops without attribution tree Section 3.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "假设数据只有 A-->V（Answer / AnswerSpan），对已加载的模型做完整开放式归因：Stage0 出口 × qkv，再自动发现 Story/Question 角色并向上扩展几轮。最后给 print_tree + 节点角色表（可读边名），并说明有没有把 V->V 误标成 A-->A-。",
+      "expected_output": "Open-ended seed-only loop via notebook cells; multi-pathway Stage0; role discovery; Section 3 with readable names; V->V baseline discussed; visualize_model_heads once.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "找 A-→V 的头：goal-directed，首轮定 match_score_floor，命中后继续向上追同一模式，不要第一轮就停。最后 visualize_model_heads 一次并汇总累计匹配头。",
+      "expected_output": "Goal-directed continuation after first match; floor derived from first round; accumulated matches table; one visualize_model_heads; no premature stop.",
+      "files": []
+    }
+  ]
+}
