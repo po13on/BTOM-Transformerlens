@@ -46,7 +46,7 @@ After Phase 1, `tnode` is the current attribution node → go to Phase 2.
 | `n_samples` | `max(20, len(df_tom))` | Reduce on OOM/slow; increase if high variance |
 | `cluster_threshold` | `0.35` | ±0.05 if clusters too coarse/fine |
 | `attn_pattern_threshold` | `0.3` | ±0.05 if too many/few candidates |
-| `max_attribution_rounds` | `5` | Raise 6–8 if tree shallow; lower on OOM |
+| *(removed)* `max_attribution_rounds` | — | **Do not use.** Stop on evidence: role-complete + stagnant, expansion failure, exhausted thresholds, or NaN health failure. See SKILL.md “How to attribute”. |
 
 ## CUDA / model path
 

@@ -75,9 +75,10 @@ Keep `matched_heads` across rounds.
 
 **Stop only when:**
 
-- `round_i >= max_attribution_rounds`, or
-- agent-set (expansion failure / exhausted thresholds / stagnation), or
-- no new match **and** no useful exploratory expansion.
+- agent-set (expansion failure / exhausted thresholds / stagnation / NaN health failure), or
+- required goal edges are on the tree **and** no new match **and** no useful exploratory expansion.
+
+**Do not** stop because a round counter hit 5 (or any other preset budget).
 
 Then: if `matched_heads` non-empty → viz once → report all matches with depth. If empty → goal-not-found.
 

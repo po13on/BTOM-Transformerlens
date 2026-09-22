@@ -168,8 +168,13 @@ Skip clusters with no clear dominant pattern.
 
 ## Agent-set stops
 
-1. **Expansion failure** — `add_tnode` / `add_edges` error
+**No round cap.** Continue while residual is finite and new cross-span roles still appear.
+
+1. **Expansion failure** — after filtering to `attr.max() > 0`, `get_downstreams()` empty or `add_tnode` / `add_edges` error
 2. **Exhausted thresholds** — `cluster_threshold`≤0.1 and `attn_pattern_threshold`≤0.05 still empty
-3. **Stagnation** — same `top_heads` / empty deduped candidates / no new roles
+3. **Stagnation** — same `top_heads` / empty deduped candidates / only self-attn baselines / no new roles
+4. **Health failure** — `isnan(attr)` after expand. Do **not** interpret NaN top-k `(0,0)…` as “only L0 left”
+
+Every expand must print `attr nan / max / minL`. Residual in fp32; `get_top_heads` on attn columns only; ≤4 nodes/round after Stage 0.
 
 On stop: report tree + roles (open-ended) or accumulated matches (goal-directed); re-run upper-bound viz once if not done; **STOP**.

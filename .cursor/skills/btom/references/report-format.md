@@ -19,7 +19,7 @@ Section 3 is **required** for open-ended complete-tree runs (and whenever the us
 |------------------------|---------|------|-----------|---------|---------|
 | (layer, head) | Pattern Score | 0.XX | A-->V | attn_k | 第 N 层归因 |
 
-> **续归因说明**：首次命中后不会停止；同一目标下继续向上直到 max_attribution_rounds 或 agent-set 终止。
+> **续归因说明**：首次命中后不会停止；同一目标下继续向上，直到角色齐 / 归因停滞 / 扩展失败 / 残差 NaN，**不要**用轮数上限停。
 >
 > **分数说明**：Pattern Score（DataFrame 列）≠ Positive Bound（visualize_model_heads 点击查看）。
 >
@@ -53,7 +53,7 @@ Section 3 is **required** for open-ended complete-tree runs (and whenever the us
 
 - 模式: open-ended（position-frontier）
 - 共执行 N 轮 cluster → score → expand
-- 停止原因: [达到 max_attribution_rounds=K / 扩展失败 / 阈值耗尽 / 归因停滞]
+- 停止原因: [角色齐且停滞 / 扩展失败 / 阈值耗尽 / 残差 NaN（已回退）]
 - 模型: …
 - 前沿演变: 第0轮后 {A-, V}; …
 - 每轮扩展摘要: …

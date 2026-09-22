@@ -1,1 +1,13 @@
 paper/
+
+# 本地归因输出（合并稿 circuit_report.md 也留在本机）
+__pycache__/
+logs/
+*.pt
+*_payload.json
+*_status.md
+*_report.md
+role_probe.json
+role_probe_report.md
+three_induction_heads.md
+figures/*.png

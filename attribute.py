@@ -271,7 +271,14 @@ def get_ranges_min_arc(example, span):
 
 
 def get_ranges_tom(example, span):
-    if span.startswith('A'):  # ans
+    # Exact keys first (scat roles: Final/Copy/QLast/DemoOut1-/...).
+    # A stored key that ends with '-' (e.g. DemoOut1-) is the index itself;
+    # do not apply the Hi-ToM suffix shift on exact hits.
+    exact = span in example
+    if exact:
+        val = example[span]
+        indices = list(val) if isinstance(val, (list, tuple)) else [val]
+    elif span.startswith('A'):  # ans
         indices = [example['A-']]
     elif span.startswith('VK'):  # qval
         if span.endswith('C'):
@@ -286,14 +293,27 @@ def get_ranges_tom(example, span):
         indices = [example['QK_C']]
     elif span.startswith('QK_I'):  # qval
         indices = [example['QK_I']]
+    else:
+        work = span
+        if work.endswith('^'):
+            work = work[:-1]
+        if work.endswith('-') and work[:-1] in example:
+            work = work[:-1]
+        elif work.endswith('+') and work[:-1] in example:
+            work = work[:-1]
+        val = example[work]
+        indices = list(val) if isinstance(val, (list, tuple)) else [val]
     if isinstance(indices, int):
         indices = torch.LongTensor([indices])
     else:
         indices = torch.LongTensor(indices)
-    if span.endswith('^'):
-        indices[1:] = indices[:-1].clone()
-    if span.endswith('-'): indices = indices - 1
-    elif span.endswith('+'): indices = indices + 1
+    if not exact:
+        if span.endswith('^'):
+            indices[1:] = indices[:-1].clone()
+        if span.endswith('-'):
+            indices = indices - 1
+        elif span.endswith('+'):
+            indices = indices + 1
     ranges = [slice(i, i + 1) for i in indices] # TODO: assume all spans are of length 1
     return ranges, indices  
 
@@ -467,11 +487,22 @@ class Node(object):
     def get_downstreams(self): return self.graph.get_downstreams(self)
 
     def set_pos_ids(self, r):
+        if getattr(self, "_setting_pos", False):
+            return
+        self._setting_pos = True
+        try:
+            self._set_pos_ids_impl(r)
+        finally:
+            self._setting_pos = False
+
+    def _set_pos_ids_impl(self, r):
         if self.is_lm_head(): #  'A-->A-'
             self.src_span = self.span = 'A-'
             self.src_pos_ids = self.pos_ids = torch.LongTensor(r.answer_indices) - 1
             return
         downstream = self.get_downstreams()[0]  # TODO: assert all downstreams have the same src_pos_ids
+        if downstream is not self:
+            downstream.set_pos_ids(r)
         if self.span is not None:
             assert self.span == downstream.src_span, f'{self.span} != {downstream.src_span}'
         else:
@@ -485,23 +516,22 @@ class Node(object):
             if src == dst:
                 self.src_span = self.span
                 self.src_pos_ids = self.pos_ids
-            elif src in ['V', 'A^']:  # TODO: add other spans
+            else:
                 self.src_span = src
                 self.src_pos_ids = get_pos_ids_by_span(r, src)
-            else:  # TODO
-                assert False
         elif self.type == 'attn_k':
             dst, src = self.attn_pattern.split('->')
             if src == dst:
                 self.src_span = self.span
                 self.src_pos_ids = self.pos_ids
-            elif src in ['VK_C', 'VK_I', 'V']:  # TODO: add other spans
+            else:
                 self.src_span = src
                 self.src_pos_ids = get_pos_ids_by_span(r, src)
-            else:  # TODO
-                assert False
         else:  # TODO
             assert False
+        seq = int(r.outputs.hidden_states[0].shape[1])
+        self.pos_ids = self.pos_ids.clamp(0, seq - 1)
+        self.src_pos_ids = self.src_pos_ids.clamp(0, seq - 1)
 
     def accum_output_grad(self, index):
         if self.type not in ['lm_head']:
@@ -677,13 +707,23 @@ def _attribute_residual(r, model, pos_ids, downstream_grads, downstream_layers, 
     """
     if to_layer is None:
         to_layer = int(math.floor(max(downstream_layers)))
-        
+
+    # fp16 einsum overflows once residual scores reach ~1e2; rank heads in fp32.
+    grads32 = downstream_grads.float()
     head_attr = torch.stack([
-        einsum('ine,gie->ng', get_head_output(model, r, l, None, pos_ids)[0], downstream_grads)
+        einsum(
+            'ine,gie->ng',
+            get_head_output(model, r, l, None, pos_ids)[0].float(),
+            grads32,
+        )
         for l in range(from_layer, to_layer)])  # lng
-    
+
     mlp_attr = torch.stack([
-        einsum('ie,gie->g', r.outputs.mlp_outputs[l][:, pos_ids].to(model.device, dtype=model.dtype)[0], downstream_grads)
+        einsum(
+            'ie,gie->g',
+            r.outputs.mlp_outputs[l][:, pos_ids].to(model.device).float()[0],
+            grads32,
+        )
         for l in range(from_layer, to_layer)])  # lg
     
     # Layer masks (only attribute to layers before downstream node)
@@ -721,6 +761,8 @@ def attribute_residual(r, model, nodes, from_layer=0, to_layer=None):
 
 def attribute_step(r, model, nodes):
     for node in nodes:
+        for ds in node.get_downstreams():
+            ds.set_pos_ids(r)
         node.set_pos_ids(r)
         node.accum_output_grad(r.index)
         node.backward(r, model)
@@ -738,7 +780,7 @@ def attribute_attn_weights(r, model, layer, head, downstreams):
     node = Node(layer, head, 'attn_a')  # create temporal node 
     for downstream in downstreams:  # add temporal edges for set_pos_ids and accum_output_grad
         node.graph.add_edge(node, downstream, 1.)  # any score is OK
-        # downstream.set_pos_ids(r)  # 更新 downstream 的 pos_ids 以匹配当前样本
+        downstream.set_pos_ids(r)  # 变长样本必须按当前 r 刷新 pos_ids
     node.set_pos_ids(r)
     node.accum_output_grad(r.index)
     node.graph.remove_node(node)  # remove temporal node and edges
@@ -746,11 +788,42 @@ def attribute_attn_weights(r, model, layer, head, downstreams):
     return aw, ag
 
 
+def _cat_pad_seq(tensors):
+    """Concat along dim 0 after right-padding every non-batch dim (variable-length prompts)."""
+    nd = tensors[0].ndim
+    max_tail = [max(t.shape[d] for t in tensors) for d in range(1, nd)]
+    padded = []
+    for t in tensors:
+        pads = []
+        for d in range(nd - 1, 0, -1):
+            pads.extend((0, max_tail[d - 1] - t.shape[d]))
+        if any(pads):
+            t = torch.nn.functional.pad(t, pads)
+        padded.append(t)
+    return torch.cat(padded, dim=0)
+
+
 def get_attn_attrs_on_dataset(results, model, layer, head, downstreams, normalize=True):
-    aw, ag = map(torch.cat, zip(*[attribute_attn_weights(r, model, layer, head, downstreams) for r in results]))
-    aa = aw * ag.abs()
-    if normalize: aa /= aa.sum(dim=-1, keepdim=True)
-    return aw, aa
+    """Per-sample (aw, aa) lists — no padding.
+
+    Variable-length prompts give different (q_len, kv_len) per sample. Padding to a
+    dense tensor erases the difference between "no data here" and "zero mass", so
+    each sample keeps its own tensor and is normalized while its rows still contain
+    only real positions. Consumers (vis.compute_js_matrix / compute_cosine_matrix /
+    visualize_group_patterns) accept per-sample lists as well as dense tensors.
+    """
+    aws, aas = [], []
+    for r in results:
+        aw, ag = attribute_attn_weights(r, model, layer, head, downstreams)
+        aa = aw * ag.abs()
+        if normalize:
+            denom = aa.sum(dim=-1, keepdim=True)
+            aa = torch.where(denom > 0, aa / denom.clamp_min(1e-12), torch.zeros_like(aa))
+        aws.append(torch.nan_to_num(aw, nan=0.0))
+        aas.append(torch.nan_to_num(aa, nan=0.0))
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    return aws, aas
 
 
 def data2str(data):
@@ -763,15 +836,23 @@ def data2str(data):
 
 
 def get_top_heads(attr, k=30, H=None):
-    attr_cpu = attr.detach().to(torch.float32).cpu()
+    attr_cpu = torch.nan_to_num(
+        attr.detach().to(torch.float32).cpu(), nan=0.0, posinf=0.0, neginf=0.0
+    )
+    mass = attr_cpu.abs().sum(dim=-1)
+    if H is not None and mass.shape[1] > H:
+        mass = mass[:, :H]
+    nkeep = min(int(k), int(mass.numel()))
+    if nkeep <= 0 or float(mass.max()) <= 0:
+        return OrderedDict()
     return OrderedDict(
-        ((int(l), int(h)), attr_cpu[l, h].abs().sum().item())  # np.int64 -> int
-        for l, h in zip(*topk_md(attr_cpu, k=k)[:2])
-        if H is None or h < H
+        ((int(l), int(h)), float(mass[l, h].item()))
+        for l, h in zip(*topk_md(mass, k=nkeep)[:2])
+        if H is None or int(h) < H
     )
 
 
-def add_tree_node(results, model, nodes, parent=None):
+def add_tree_node(results, model, nodes, parent=None, k=30):
     d = AttrData(nodes=nodes)
     tnode = TNode(data2str(d), parent=parent); tnode.data = d
 
@@ -780,9 +861,11 @@ def add_tree_node(results, model, nodes, parent=None):
         H = model.config.num_attention_heads
     else:
         H = model.cfg.n_heads
-    d.top_heads = get_top_heads(d.attr, k=30, H=H)  # attr -> top_heads -> attn_attrs_ds
+    d.top_heads = get_top_heads(d.attr, k=k, H=H)  # attr -> top_heads -> attn_attrs_ds
     for l, h in d.top_heads:
         d.attn_weights_ds[(l, h)], d.attn_attrs_ds[(l, h)] = get_attn_attrs_on_dataset(results, model, l, h, nodes)
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
     return tnode
 
 
